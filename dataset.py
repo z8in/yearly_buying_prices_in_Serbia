@@ -1,5 +1,4 @@
 import requests
-from pandas.io.json import json_normalize
 import pandas as pd
 import json
 import ssl
@@ -16,7 +15,33 @@ else:
     
 # Data are from json file from public website from opendata.stat.gov.rs        
 url = 'https://opendata.stat.gov.rs/data/WcfJsonRestService.Service1.svc/dataset/0306IND01/2/json'
-dataset = pd.read_json(url)
+resp = requests.get(url, timeout=30)
+resp.raise_for_status()
+
+# Tolerate BOMs and whitespace; parse JSON with fallback
+text = resp.text.lstrip("\ufeff").strip()
+try:
+    data = resp.json()
+except ValueError:
+    # Fallback parser if resp.json() fails (e.g., BOM or minor formatting)
+    try:
+        data = json.loads(text)
+    except Exception as e:
+        raise SystemExit(f"Failed to parse JSON from API. First 200 chars: {text[:200]}")
+
+# Build DataFrame from parsed JSON
+if isinstance(data, list):
+    dataset = pd.DataFrame(data)
+elif isinstance(data, dict):
+    # Try common wrapper keys if provider changes shape
+    for key in ("items", "data", "results", "value"):
+        if key in data and isinstance(data[key], list):
+            dataset = pd.DataFrame(data[key])
+            break
+    else:
+        dataset = pd.json_normalize(data)
+else:
+    raise SystemExit("Unexpected JSON structure from the API.")
 
 print(dataset.info())
 
@@ -31,16 +56,15 @@ product = str(input("Enter product name: "))
 cond = dataset.loc[dataset['nProizvod'] == product]
 
 #creating variable for unique year
-year = dataset['god'].unique()
+year = cond['god']
 
 
 #ploting results in matplotlib
 fig, ax = plt.subplots()
 ax.stackplot(year, cond['vrednost'], alpha=0.5)
 
-ax.legend(loc='upper left')
 ax.set_title('Price of ' + str(product) + " from year " + str(dataset['god'].min()) + "-" + str(dataset['god'].max()))
 ax.set_xlabel('Year')
-ax.set_ylabel('price')
+ax.set_ylabel('Price')
 
 plt.show()
